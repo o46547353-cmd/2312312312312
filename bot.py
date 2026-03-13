@@ -246,7 +246,14 @@ async def cmd_postseries(upd, ctx):
     msg = await upd.message.reply_text("⏳ Публикую в Threads... (1–2 минуты)")
     try:
         from threads_api import post_series, post_single_text
-        image    = storage.get_image()
+        import os as _os
+        image = storage.get_image()
+        if image and not _os.path.exists(image):
+            await upd.message.reply_text(
+                f"⚠️ Картинка не найдена: {image}\n"
+                "Обнови через /kartinka — отправь фото заново."
+            )
+            image = None
         post_ids = []
         if item.get("type") == "series":
             post_ids = await asyncio.to_thread(post_series, item["posts"], image)
@@ -904,29 +911,6 @@ async def cmd_tema(upd, ctx):
         await upd.message.reply_text(f"✅ Тема добавлена: «{topic}»\nВсего тем: {len(topics)}")
 
 
-
-# ─── /testimg — диагностика загрузки картинки ─────────────────────────────────
-@owner_only
-async def cmd_testimg(upd, ctx):
-    from threads_api import _upload_image
-    image = storage.get_image()
-    if not image:
-        await upd.message.reply_text("❌ Картинка не установлена. Сначала /kartinka")
-        return
-    msg = await upd.message.reply_text(f"🔍 Тестирую загрузку:\n{image}")
-    try:
-        import os
-        size = os.path.getsize(image)
-        uid = await asyncio.to_thread(_upload_image, image)
-        await msg.edit_text(
-            f"✅ Картинка загружена!\n"
-            f"Файл: {image}\n"
-            f"Размер: {size} байт\n"
-            f"upload_id: {uid}"
-        )
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка загрузки:\n{str(e)[:500]}")
-
 # ─── Планировщики ─────────────────────────────────────────────────────────────
 def _start_post_scheduler(application):
     h = storage.get_setting("interval_hours") or 4
@@ -972,7 +956,6 @@ def main():
         ("avto",         cmd_auto),
         ("auto",         cmd_auto),
         ("tema",         cmd_tema),
-        ("testimg",      cmd_testimg),
         ("interval",     cmd_interval),
         ("avtootvet",    cmd_dm_toggle),
         ("soobschenie",  cmd_set_dm_text),
@@ -1004,6 +987,3 @@ if __name__ == "__main__":
         main()
     except (KeyboardInterrupt, SystemExit):
         print("Бот остановлен.")
-
-# ─── /testimg — диагностика загрузки картинки ────────────────────────────────
-# (добавить в main() как: ("testimg", cmd_testimg))

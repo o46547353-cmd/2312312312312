@@ -15,7 +15,7 @@
     "interval_hours": 4,
     "active": false
   },
-  "image_path": "C:\\threads\\slash_logo.jpg",
+  "image_path": "slash_logo.jpg",
   "dm_text": "Привет! Вот ссылка: https://t.me/Slashpn_bot",
   "dm_active": true,
   "messaged_users": [],
