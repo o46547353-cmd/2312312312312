@@ -15,6 +15,8 @@ _DEFAULTS = {
     "watched_posts":  [],   # post_id которые мониторим
     "pending_dm":     [],   # [{"user_id": "...", "username": "...", "post_id": "..."}]
                             # кто написал +, но DM ещё не получил
+    "auto_topics":    [],   # список тем для авто-генерации
+    "topic_index":    0,    # индекс следующей темы
 }
 
 
@@ -200,6 +202,46 @@ def remove_watched_post(post_id: str):
     d = _load()
     d["watched_posts"] = [x for x in d["watched_posts"] if str(x) != str(post_id)]
     _save(d)
+
+
+# ── Авто-темы ─────────────────────────────────────────────────────────────────
+
+def get_auto_topics() -> list:
+    return _load().get("auto_topics", [])
+
+
+def add_auto_topic(topic: str):
+    d = _load()
+    d.setdefault("auto_topics", [])
+    if topic not in d["auto_topics"]:
+        d["auto_topics"].append(topic)
+    _save(d)
+
+
+def remove_auto_topic(index: int):
+    d = _load()
+    topics = d.get("auto_topics", [])
+    if 0 <= index < len(topics):
+        topics.pop(index)
+        if topics:
+            d["topic_index"] = d.get("topic_index", 0) % len(topics)
+        else:
+            d["topic_index"] = 0
+        d["auto_topics"] = topics
+        _save(d)
+
+
+def next_auto_topic() -> str | None:
+    """Возвращает следующую тему по кругу и сдвигает индекс."""
+    d = _load()
+    topics = d.get("auto_topics", [])
+    if not topics:
+        return None
+    idx = d.get("topic_index", 0) % len(topics)
+    topic = topics[idx]
+    d["topic_index"] = (idx + 1) % len(topics)
+    _save(d)
+    return topic
 
 
 # ── Статистика ────────────────────────────────────────────────────────────────
