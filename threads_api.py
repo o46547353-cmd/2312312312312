@@ -73,19 +73,13 @@ def _upload_image(image_path: str) -> str:
     upload_url = f"https://www.threads.net/rupload_igphoto/fb_uploader_{upload_id}"
     with open(image_path, "rb") as f:
         img_data = f.read()
+    # image_compression должен быть JSON-строкой внутри JSON (не dict)
     rupload_params = json.dumps({
         "upload_id":         upload_id,
         "media_type":        1,
-        "sticker_burnin_params": None,
-        "image_compression": json.dumps({
-            "lib_name": "moz", "lib_version": "3.1.m", "quality": "87"
-        }),
+        "image_compression": json.dumps({"lib_name": "moz", "lib_version": "3.1.m", "quality": "87"}),
         "xsharing_user_ids": json.dumps([]),
-        "retry_context": json.dumps({
-            "num_step_auto_retry": 0,
-            "num_reupload": 0,
-            "num_step_manual_retry": 0,
-        }),
+        "retry_context":     json.dumps({"num_step_auto_retry": 0, "num_reupload": 0, "num_step_manual_retry": 0}),
     })
     r = requests.post(upload_url, headers={
         **HEADERS,
@@ -96,7 +90,7 @@ def _upload_image(image_path: str) -> str:
         "X-Instagram-Rupload-Params": rupload_params,
         "Offset":                     "0",
     }, data=img_data, timeout=60)
-    print(f"[upload] {r.status_code} → {r.text[:200]}")
+    print(f"[upload] {r.status_code} → {r.text[:300]}")
     if r.status_code not in (200, 201):
         raise Exception(f"Картинка upload: {r.status_code} {r.text[:300]}")
     return upload_id
@@ -130,7 +124,7 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
             upload_id = _upload_image(image_path)
             has_image = True
             print(f"[img] загружена upload_id={upload_id}, жду обработки...")
-            time.sleep(12)  # Threads нужно время зарегистрировать upload
+            time.sleep(7)  # Threads нужно время зарегистрировать upload в state machine
         except Exception as e:
             print(f"[img] не загружена: {e}, постим без картинки")
 
@@ -147,8 +141,6 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
             "media_type":         "1",
             "audience":           "default",
             "publish_mode":       "text_post",
-            "scene_type":         "1",
-            "creation_logger_session_id": str(uuid.uuid4()),
         }
     else:
         url = "https://www.threads.net/api/v1/media/configure_text_only_post/"
@@ -199,12 +191,14 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
 
 
 def post_series(posts: dict, image_path: str = None) -> list:
+    # Картинка только в пост1 (корневой без reply_to_id).
+    # Threads не принимает медиа в reply-постах — даёт 400.
     ids = []
-    id1 = _post_single(posts["post1"])
+    id1 = _post_single(posts["post1"], image_path=image_path)
     ids.append(id1); time.sleep(random.uniform(8, 12))
     id2 = _post_single(posts["post2"], reply_to_id=id1)
     ids.append(id2); time.sleep(random.uniform(8, 12))
-    id3 = _post_single(posts["post3"], reply_to_id=id2, image_path=image_path)
+    id3 = _post_single(posts["post3"], reply_to_id=id2)
     ids.append(id3); time.sleep(random.uniform(8, 12))
     id4 = _post_single(posts["post4"], reply_to_id=id3)
     ids.append(id4)
