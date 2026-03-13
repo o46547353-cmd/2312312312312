@@ -75,7 +75,7 @@ def _upload_image(image_path: str) -> str:
         img_data = f.read()
     rupload_params = json.dumps({
         "upload_id": upload_id, "media_type": 1,
-        "image_compression": '{"lib_name":"moz","lib_version":"3.1.m","quality":"87"}'
+        "image_compression": {"lib_name": "moz", "lib_version": "3.1.m", "quality": "87"}
     })
     r = requests.post(upload_url, headers={
         **HEADERS,
@@ -83,7 +83,7 @@ def _upload_image(image_path: str) -> str:
         "X-Entity-Length":            str(len(img_data)),
         "X-Entity-Name":              f"fb_uploader_{upload_id}",
         "X-Instagram-Rupload-Params": rupload_params,
-        "Offset":                     "0",
+        "offset":                     "0",
     }, data=img_data, timeout=30)
     if r.status_code != 200:
         raise Exception(f"Картинка: {r.status_code} {r.text[:200]}")
@@ -117,7 +117,8 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
         try:
             upload_id = _upload_image(image_path)
             has_image = True
-            time.sleep(3)  # Threads нужно время зарегистрировать upload в state machine
+            print(f"[img] загружена upload_id={upload_id}, жду обработки...")
+            time.sleep(7)  # Threads нужно время зарегистрировать upload в state machine
         except Exception as e:
             print(f"[img] не загружена: {e}, постим без картинки")
 

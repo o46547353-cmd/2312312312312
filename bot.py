@@ -91,7 +91,24 @@ async def cmd_help(upd, ctx):
 /interval [часы] — интервал между постами
   Пример: /interval 6 → публикация раз в 6 часов
 
-Когда очередь заканчивается — бот уведомит и остановится.
+Бот публикует из очереди. Если очередь пуста —
+сам генерирует серию по следующей теме из списка.
+
+━━━━━━━━━━━━━━━━
+🎯 АВТО-ТЕМЫ
+━━━━━━━━━━━━━━━━
+
+/tema — список всех тем (и какая следующая)
+/tema добавить <тема> — добавить тему
+/tema удалить <номер> — удалить тему
+/tema очистить — удалить все темы
+
+Пример:
+  /tema добавить жизнь без VPN
+  /tema добавить зачем нужен VPN в 2025
+  /tema добавить как защитить трафик
+
+Темы используются по кругу автоматически.
 
 ━━━━━━━━━━━━━━━━
 🖼 КАРТИНКА
@@ -195,9 +212,9 @@ async def cmd_post1(upd, ctx):
         item = {"type": "single", "text": text}
         storage.archive_item(item, [post_id])
         storage.add_watched_post(post_id)
-        await msg.edit_text(f"✅ Опубликовано!\n\n{text[:300]}", write_timeout=60)
+        await msg.edit_text(f"✅ Опубликовано!\n\n{text[:300]}")
     except Exception as e:
-        await msg.edit_text(f"❌ Ошибка публикации: {e}", write_timeout=60)
+        await msg.edit_text(f"❌ Ошибка публикации: {e}")
 
 
 # ─── /pokazat ─────────────────────────────────────────────────────────────────
@@ -240,7 +257,7 @@ async def cmd_postseries(upd, ctx):
         if post_ids:
             storage.add_watched_post(post_ids[0])
         await msg.edit_text(
-            f"✅ Опубликовано! Осталось: {storage.count()} шт.", write_timeout=60
+            f"✅ Опубликовано! Осталось: {storage.count()} шт."
         )
     except Exception as e:
         if item.get("type") == "series":
@@ -248,7 +265,7 @@ async def cmd_postseries(upd, ctx):
         else:
             storage.add(item.get("text", ""))
         try:
-            await msg.edit_text(f"❌ Ошибка: {str(e)[:300]}", write_timeout=60)
+            await msg.edit_text(f"❌ Ошибка: {str(e)[:300]}")
         except Exception:
             await upd.message.reply_text(f"❌ Ошибка: {str(e)[:300]}")
 
@@ -705,11 +722,13 @@ async def cmd_status(upd, ctx):
         f"📊 Состояние бота\n\n"
         f"📋 В очереди: {storage.count()} серий\n"
         f"🤖 Автопостинг: {'✅ вкл' if active else '⏹ выкл'} ({h} ч.)\n"
+        f"🎯 Авто-темы: {len(storage.get_auto_topics())} шт. → /tema\n"
         f"🖼 Картинка: {img}\n"
         f"💬 Автоответ: {'✅ вкл' if dm_on else '⏹ выкл'}\n"
         f"📨 DM: {s['total_dm_sent']} чел. (ожидают: {s['pending_dm']})\n"
         f"📂 Архив: {s['total_published']} серий\n\n"
         f"/stats — подробная статистика\n"
+        f"/tema — управление темами\n"
         f"/check — проверить + в комментариях"
     )
 
@@ -761,15 +780,31 @@ async def _auto_job(application: Application):
     from threads_api import post_series, post_single_text
     if not storage.get_setting("active"):
         return
+
+    # Берём из очереди или генерируем по теме
     item = storage.pop()
+    generated_topic = None
+
     if not item:
-        await application.bot.send_message(
-            OWNER_ID, "📭 Очередь пуста! Автопостинг остановлен."
-        )
-        storage.set_setting("active", False)
-        if scheduler.get_job("post_job"):
-            scheduler.remove_job("post_job")
-        return
+        topic = storage.next_auto_topic()
+        if not topic:
+            try:
+                topic = await asyncio.to_thread(ai_gen.generate_topic)
+            except Exception as e:
+                await application.bot.send_message(
+                    OWNER_ID, f"❌ Авто: не могу придумать тему: {str(e)[:200]}"
+                )
+                return
+        try:
+            series = await asyncio.to_thread(ai_gen.generate_series, topic)
+            item   = {"type": "series", "posts": series}
+            generated_topic = topic
+        except Exception as e:
+            await application.bot.send_message(
+                OWNER_ID, f"❌ Авто: ошибка генерации темы «{topic}»: {str(e)[:200]}"
+            )
+            return
+
     try:
         image    = storage.get_image()
         post_ids = []
@@ -781,15 +816,92 @@ async def _auto_job(application: Application):
         storage.archive_item(item, post_ids)
         if post_ids:
             storage.add_watched_post(post_ids[0])
+
+        source = f"тема «{generated_topic}»" if generated_topic else f"очередь (осталось: {storage.count()})"
+        preview = ""
+        if item.get("type") == "series":
+            preview = "\n\n" + item["posts"].get("post1", "")[:200] + "..."
         await application.bot.send_message(
-            OWNER_ID, f"✅ Авто: опубликовано! Осталось: {storage.count()}"
+            OWNER_ID,
+            f"✅ Авто: опубликовано из {source}{preview}"
         )
     except Exception as e:
-        if item.get("type") == "series":
-            storage.add_series(item["posts"])
-        else:
-            storage.add(item.get("text", ""))
+        # Возвращаем в очередь только если взяли из очереди (не авто-генерация)
+        if not generated_topic:
+            if item.get("type") == "series":
+                storage.add_series(item["posts"])
+            else:
+                storage.add(item.get("text", ""))
         await application.bot.send_message(OWNER_ID, f"❌ Авто ошибка: {str(e)[:300]}")
+
+
+
+
+# ─── /tema — управление авто-темами ──────────────────────────────────────────
+@owner_only
+async def cmd_tema(upd, ctx):
+    args = ctx.args
+
+    # /tema  (без аргументов) — показать список
+    if not args:
+        topics = storage.get_auto_topics()
+        if not topics:
+            await upd.message.reply_text(
+                "📋 Темы для авто-генерации не добавлены.\n\n"
+                "Добавить: /tema добавить <тема>\n"
+                "Пример: /tema добавить почему VPN нужен каждому"
+            )
+        else:
+            idx = storage._load().get("topic_index", 0) % len(topics)
+            lines = []
+            for i, t in enumerate(topics):
+                pointer = "→ " if i == idx else "   "
+                lines.append(f"{pointer}{i+1}. {t}")
+            await upd.message.reply_text(
+                f"📋 Темы авто-генерации ({len(topics)} шт.):\n\n"
+                + "\n".join(lines)
+                + "\n\n→ следующая по очереди\n"
+                  "Удалить: /tema удалить <номер>\n"
+                  "Добавить: /tema добавить <текст>"
+            )
+        return
+
+    subcmd = args[0].lower()
+
+    if subcmd in ("добавить", "add", "+"):
+        topic = " ".join(args[1:]).strip()
+        if not topic:
+            await upd.message.reply_text("Укажи тему. Пример: /tema добавить жизнь без VPN")
+            return
+        storage.add_auto_topic(topic)
+        topics = storage.get_auto_topics()
+        await upd.message.reply_text(f"✅ Тема добавлена: «{topic}»\nВсего тем: {len(topics)}")
+
+    elif subcmd in ("удалить", "del", "delete", "-"):
+        if len(args) < 2 or not args[1].isdigit():
+            await upd.message.reply_text("Укажи номер. Пример: /tema удалить 2")
+            return
+        n = int(args[1]) - 1
+        topics = storage.get_auto_topics()
+        if 0 <= n < len(topics):
+            removed = topics[n]
+            storage.remove_auto_topic(n)
+            await upd.message.reply_text(f"🗑 Удалено: «{removed}»")
+        else:
+            await upd.message.reply_text(f"❌ Нет темы с номером {n+1}")
+
+    elif subcmd in ("очистить", "clear"):
+        topics = storage.get_auto_topics()
+        for _ in range(len(topics)):
+            storage.remove_auto_topic(0)
+        await upd.message.reply_text("🗑 Все темы удалены")
+
+    else:
+        # /tema текст напрямую без подкоманды — добавляем как тему
+        topic = " ".join(args).strip()
+        storage.add_auto_topic(topic)
+        topics = storage.get_auto_topics()
+        await upd.message.reply_text(f"✅ Тема добавлена: «{topic}»\nВсего тем: {len(topics)}")
 
 
 # ─── Планировщики ─────────────────────────────────────────────────────────────
@@ -823,6 +935,7 @@ def main():
         ("pomosch",      cmd_help),
         ("seriya",       cmd_series),
         ("series",       cmd_series),
+        ("post",         cmd_post1),
         ("post1",        cmd_post1),
         ("pokazat",      cmd_showseries),
         ("showseries",   cmd_showseries),
@@ -835,6 +948,7 @@ def main():
         ("arhiv",        cmd_archive),
         ("avto",         cmd_auto),
         ("auto",         cmd_auto),
+        ("tema",         cmd_tema),
         ("interval",     cmd_interval),
         ("avtootvet",    cmd_dm_toggle),
         ("soobschenie",  cmd_set_dm_text),

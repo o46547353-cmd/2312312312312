@@ -30,6 +30,31 @@ CTA всегда: напиши + в комментах - скину ссылку
 
 Переносы строк внутри текста заменяй на \\n"""
 
+
+TOPIC_SYSTEM = """Придумай одну свежую тему для рекламного поста о SLASH VPN в Threads.
+SLASH VPN — Telegram-бот для защиты интернет-трафика. Тарифы от 10р/день.
+Аудитория: обычные пользователи 18-35 лет, Россия.
+
+Тема должна:
+- цеплять болью или страхом (слежка, блокировки, утечки данных, скорость)
+- быть конкретной, бытовой, не абстрактной
+- 3-8 слов максимум
+
+Отвечай СТРОГО одной строкой — только текст темы, без кавычек, без пояснений."""
+
+def generate_topic() -> str:
+    """AI сам придумывает тему для следующего поста."""
+    resp = client.chat.completions.create(
+        model="gpt-4.1-nano",
+        messages=[
+            {"role": "system", "content": TOPIC_SYSTEM},
+            {"role": "user", "content": "Придумай тему"},
+        ],
+        max_tokens=50,
+        temperature=1.0,
+    )
+    return resp.choices[0].message.content.strip().strip('"').strip("'")
+
 def generate_series(topic: str) -> dict:
     resp = client.chat.completions.create(
         model="gpt-4.1-nano",
