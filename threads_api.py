@@ -74,19 +74,31 @@ def _upload_image(image_path: str) -> str:
     with open(image_path, "rb") as f:
         img_data = f.read()
     rupload_params = json.dumps({
-        "upload_id": upload_id, "media_type": 1,
-        "image_compression": {"lib_name": "moz", "lib_version": "3.1.m", "quality": "87"}
+        "upload_id":         upload_id,
+        "media_type":        1,
+        "sticker_burnin_params": None,
+        "image_compression": json.dumps({
+            "lib_name": "moz", "lib_version": "3.1.m", "quality": "87"
+        }),
+        "xsharing_user_ids": json.dumps([]),
+        "retry_context": json.dumps({
+            "num_step_auto_retry": 0,
+            "num_reupload": 0,
+            "num_step_manual_retry": 0,
+        }),
     })
     r = requests.post(upload_url, headers={
         **HEADERS,
         "Content-Type":               "application/octet-stream",
+        "X-Entity-Type":              "image/jpeg",
         "X-Entity-Length":            str(len(img_data)),
         "X-Entity-Name":              f"fb_uploader_{upload_id}",
         "X-Instagram-Rupload-Params": rupload_params,
-        "offset":                     "0",
-    }, data=img_data, timeout=30)
-    if r.status_code != 200:
-        raise Exception(f"Картинка: {r.status_code} {r.text[:200]}")
+        "Offset":                     "0",
+    }, data=img_data, timeout=60)
+    print(f"[upload] {r.status_code} → {r.text[:200]}")
+    if r.status_code not in (200, 201):
+        raise Exception(f"Картинка upload: {r.status_code} {r.text[:300]}")
     return upload_id
 
 
@@ -118,7 +130,7 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
             upload_id = _upload_image(image_path)
             has_image = True
             print(f"[img] загружена upload_id={upload_id}, жду обработки...")
-            time.sleep(7)  # Threads нужно время зарегистрировать upload в state machine
+            time.sleep(12)  # Threads нужно время зарегистрировать upload
         except Exception as e:
             print(f"[img] не загружена: {e}, постим без картинки")
 
@@ -135,6 +147,8 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
             "media_type":         "1",
             "audience":           "default",
             "publish_mode":       "text_post",
+            "scene_type":         "1",
+            "creation_logger_session_id": str(uuid.uuid4()),
         }
     else:
         url = "https://www.threads.net/api/v1/media/configure_text_only_post/"
