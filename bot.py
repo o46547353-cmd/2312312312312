@@ -246,14 +246,7 @@ async def cmd_postseries(upd, ctx):
     msg = await upd.message.reply_text("⏳ Публикую в Threads... (1–2 минуты)")
     try:
         from threads_api import post_series, post_single_text
-        import os as _os
-        image = storage.get_image()
-        if image and not _os.path.exists(image):
-            await upd.message.reply_text(
-                f"⚠️ Картинка не найдена: {image}\n"
-                "Обнови через /kartinka — отправь фото заново."
-            )
-            image = None
+        image    = storage.get_image()
         post_ids = []
         if item.get("type") == "series":
             post_ids = await asyncio.to_thread(post_series, item["posts"], image)
@@ -730,6 +723,7 @@ async def cmd_status(upd, ctx):
         f"📋 В очереди: {storage.count()} серий\n"
         f"🤖 Автопостинг: {'✅ вкл' if active else '⏹ выкл'} ({h} ч.)\n"
         f"🎯 Авто-темы: {len(storage.get_auto_topics())} шт. → /tema\n"
+        f"📌 Пресет: {storage.get_active_preset_name() or '— не выбран'} → /preset\n"
         f"🖼 Картинка: {img}\n"
         f"💬 Автоответ: {'✅ вкл' if dm_on else '⏹ выкл'}\n"
         f"📨 DM: {s['total_dm_sent']} чел. (ожидают: {s['pending_dm']})\n"
@@ -793,17 +787,32 @@ async def _auto_job(application: Application):
     generated_topic = None
 
     if not item:
-        topic = storage.next_auto_topic()
+        # Приоритет: активный пресет → авто-темы → AI-генерация темы
+        preset      = storage.get_active_preset()
+        preset_name = storage.get_active_preset_name()
+        style       = preset.get("style", "") if preset else ""
+
+        if preset and preset.get("topics"):
+            topic = storage.preset_next_topic(preset_name)
+        else:
+            topic = storage.next_auto_topic()
+
         if not topic:
             try:
-                topic = await asyncio.to_thread(ai_gen.generate_topic)
+                topic = await asyncio.to_thread(
+                    ai_gen.generate_topic_with_style if style else ai_gen.generate_topic,
+                    *([style] if style else [])
+                )
             except Exception as e:
                 await application.bot.send_message(
                     OWNER_ID, f"❌ Авто: не могу придумать тему: {str(e)[:200]}"
                 )
                 return
         try:
-            series = await asyncio.to_thread(ai_gen.generate_series, topic)
+            if style:
+                series = await asyncio.to_thread(ai_gen.generate_series_with_style, topic, style)
+            else:
+                series = await asyncio.to_thread(ai_gen.generate_series, topic)
             item   = {"type": "series", "posts": series}
             generated_topic = topic
         except Exception as e:
@@ -911,6 +920,223 @@ async def cmd_tema(upd, ctx):
         await upd.message.reply_text(f"✅ Тема добавлена: «{topic}»\nВсего тем: {len(topics)}")
 
 
+
+
+# ─── /preset — управление пресетами ──────────────────────────────────────────
+@owner_only
+async def cmd_preset(upd, ctx):
+    """
+    /preset new <название>       — создать пресет
+    /preset list                 — список всех пресетов
+    /preset set <название>       — активировать пресет
+    /preset info                 — инфо об активном пресете
+    /preset del <название>       — удалить пресет
+    /preset tema <текст>         — добавить тему в активный пресет
+    /preset tema del <номер>     — удалить тему из активного пресета
+    /preset stil <текст>         — задать стиль активного пресета
+    /preset interval <часы>      — интервал активного пресета
+    """
+    args = ctx.args
+    if not args:
+        await upd.message.reply_text(
+            "📋 Управление пресетами:\n\n"
+            "/preset new <название> — создать\n"
+            "/preset list — список\n"
+            "/preset set <название> — активировать\n"
+            "/preset info — текущий пресет\n"
+            "/preset del <название> — удалить\n"
+            "/preset tema <текст> — добавить тему\n"
+            "/preset tema del <номер> — удалить тему\n"
+            "/preset stil <текст> — задать стиль\n"
+            "/preset interval <часы> — интервал\n\n"
+            "Пример:\n"
+            "/preset new агрессивный\n"
+            "/preset stil агрессивный, короткие удары, без воды\n"
+            "/preset tema жизнь без VPN в 2025\n"
+            "/preset interval 6\n"
+            "/preset set агрессивный"
+        )
+        return
+
+    sub = args[0].lower()
+
+    # --- new ---
+    if sub in ("new", "создать"):
+        name = " ".join(args[1:]).strip()
+        if not name:
+            await upd.message.reply_text("Укажи название: /preset new агрессивный")
+            return
+        storage.preset_create(name)
+        await upd.message.reply_text(
+            f"✅ Пресет «{name}» создан.\n\n"
+            f"Теперь настрой его:\n"
+            f"/preset stil <стиль>\n"
+            f"/preset tema <тема>\n"
+            f"/preset interval <часы>\n"
+            f"/preset set {name}"
+        )
+
+    # --- list ---
+    elif sub in ("list", "список"):
+        presets = storage.get_presets()
+        active  = storage.get_active_preset_name()
+        if not presets:
+            await upd.message.reply_text(
+                "📭 Пресетов нет.\nСоздай: /preset new <название>"
+            )
+            return
+        lines = []
+        for name, p in presets.items():
+            marker  = "▶️ " if name == active else "   "
+            n_topics = len(p.get("topics", []))
+            interval = p.get("interval_hours", 4)
+            style_short = (p.get("style") or "—")[:40]
+            lines.append(
+                f"{marker}*{name}*\n"
+                f"   Тем: {n_topics} | Интервал: {interval}ч\n"
+                f"   Стиль: {style_short}"
+            )
+        await upd.message.reply_text(
+            f"📋 Пресеты ({len(presets)} шт.):\n\n" + "\n\n".join(lines),
+            parse_mode="Markdown"
+        )
+
+    # --- set ---
+    elif sub in ("set", "активировать", "вкл"):
+        name = " ".join(args[1:]).strip()
+        if not name:
+            await upd.message.reply_text("Укажи название: /preset set агрессивный")
+            return
+        if storage.preset_set_active(name):
+            p = storage.get_active_preset()
+            h = p.get("interval_hours", 4)
+            if storage.get_setting("active"):
+                _start_post_scheduler(ctx.application)
+            await upd.message.reply_text(
+                f"✅ Активен пресет «{name}»\n"
+                f"Интервал: {h}ч | Тем: {len(p.get('topics',[]))} | "
+                f"Стиль: {(p.get('style') or 'авто')[:50]}"
+            )
+        else:
+            await upd.message.reply_text(
+                f"❌ Пресет «{name}» не найден.\n/preset list — список пресетов"
+            )
+
+    # --- info ---
+    elif sub in ("info", "инфо"):
+        name = storage.get_active_preset_name()
+        p    = storage.get_active_preset()
+        if not p:
+            await upd.message.reply_text(
+                "Активного пресета нет.\n/preset list — список\n/preset set <название> — активировать"
+            )
+            return
+        topics = p.get("topics", [])
+        idx    = p.get("topic_index", 0) % len(topics) if topics else 0
+        topic_lines = []
+        for i, t in enumerate(topics):
+            pointer = "→ " if i == idx else "   "
+            topic_lines.append(f"{pointer}{i+1}. {t}")
+        await upd.message.reply_text(
+            f"📌 Активный пресет: *{name}*\n\n"
+            f"⏱ Интервал: {p.get('interval_hours', 4)} ч\n"
+            f"🎨 Стиль: {p.get('style') or '— (авто)'}\n\n"
+            f"📋 Темы ({len(topics)} шт.):\n" +
+            ("\n".join(topic_lines) if topic_lines else "— нет тем (буду придумывать сам)"),
+            parse_mode="Markdown"
+        )
+
+    # --- del ---
+    elif sub in ("del", "delete", "удалить"):
+        name = " ".join(args[1:]).strip()
+        if not name:
+            await upd.message.reply_text("Укажи название: /preset del агрессивный")
+            return
+        if storage.preset_delete(name):
+            await upd.message.reply_text(f"🗑 Пресет «{name}» удалён")
+        else:
+            await upd.message.reply_text(f"❌ Пресет «{name}» не найден")
+
+    # --- tema ---
+    elif sub in ("tema", "тема"):
+        name = storage.get_active_preset_name()
+        if not name:
+            await upd.message.reply_text(
+                "Сначала активируй пресет: /preset set <название>"
+            )
+            return
+        if len(args) < 2:
+            await upd.message.reply_text("Укажи тему: /preset tema жизнь без VPN")
+            return
+
+        # /preset tema del <номер>
+        if args[1].lower() in ("del", "delete", "удалить") and len(args) >= 3:
+            if not args[2].isdigit():
+                await upd.message.reply_text("Укажи номер: /preset tema del 2")
+                return
+            n = int(args[2]) - 1
+            if storage.preset_remove_topic(name, n):
+                p = storage.get_active_preset()
+                await upd.message.reply_text(
+                    f"🗑 Тема удалена из пресета «{name}»\n"
+                    f"Осталось тем: {len(p.get('topics', []))}"
+                )
+            else:
+                await upd.message.reply_text(f"❌ Нет темы с номером {n+1}")
+            return
+
+        topic = " ".join(args[1:]).strip()
+        storage.preset_add_topic(name, topic)
+        p = storage.get_active_preset()
+        await upd.message.reply_text(
+            f"✅ Тема добавлена в «{name}»: «{topic}»\n"
+            f"Всего тем: {len(p.get('topics', []))}"
+        )
+
+    # --- stil ---
+    elif sub in ("stil", "стиль", "style"):
+        name = storage.get_active_preset_name()
+        if not name:
+            await upd.message.reply_text(
+                "Сначала активируй пресет: /preset set <название>"
+            )
+            return
+        style = " ".join(args[1:]).strip()
+        if not style:
+            p = storage.get_active_preset()
+            await upd.message.reply_text(
+                f"Текущий стиль «{name}»:\n{p.get('style') or '— не задан'}\n\n"
+                f"Изменить: /preset stil агрессивный, короткие фразы"
+            )
+            return
+        storage.preset_set_style(name, style)
+        await upd.message.reply_text(f"✅ Стиль пресета «{name}» обновлён:\n«{style}»")
+
+    # --- interval ---
+    elif sub in ("interval", "интервал"):
+        name = storage.get_active_preset_name()
+        if not name:
+            await upd.message.reply_text(
+                "Сначала активируй пресет: /preset set <название>"
+            )
+            return
+        if len(args) < 2 or not args[1].isdigit():
+            await upd.message.reply_text("Пример: /preset interval 6")
+            return
+        h = int(args[1])
+        storage.preset_set_interval(name, h)
+        if storage.get_setting("active"):
+            _start_post_scheduler(ctx.application)
+        await upd.message.reply_text(
+            f"✅ Интервал пресета «{name}»: {h} ч\n"
+            f"{'Планировщик перезапущен.' if storage.get_setting('active') else ''}"
+        )
+
+    else:
+        await upd.message.reply_text(
+            f"Неизвестная команда «{sub}».\n/preset — справка"
+        )
+
 # ─── Планировщики ─────────────────────────────────────────────────────────────
 def _start_post_scheduler(application):
     h = storage.get_setting("interval_hours") or 4
@@ -956,6 +1182,7 @@ def main():
         ("avto",         cmd_auto),
         ("auto",         cmd_auto),
         ("tema",         cmd_tema),
+        ("preset",       cmd_preset),
         ("interval",     cmd_interval),
         ("avtootvet",    cmd_dm_toggle),
         ("soobschenie",  cmd_set_dm_text),

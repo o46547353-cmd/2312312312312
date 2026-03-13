@@ -15,8 +15,6 @@ _DEFAULTS = {
     "watched_posts":  [],   # post_id которые мониторим
     "pending_dm":     [],   # [{"user_id": "...", "username": "...", "post_id": "..."}]
                             # кто написал +, но DM ещё не получил
-    "auto_topics":    [],   # список тем для авто-генерации
-    "topic_index":    0,    # индекс следующей темы
 }
 
 
@@ -204,46 +202,6 @@ def remove_watched_post(post_id: str):
     _save(d)
 
 
-# ── Авто-темы ─────────────────────────────────────────────────────────────────
-
-def get_auto_topics() -> list:
-    return _load().get("auto_topics", [])
-
-
-def add_auto_topic(topic: str):
-    d = _load()
-    d.setdefault("auto_topics", [])
-    if topic not in d["auto_topics"]:
-        d["auto_topics"].append(topic)
-    _save(d)
-
-
-def remove_auto_topic(index: int):
-    d = _load()
-    topics = d.get("auto_topics", [])
-    if 0 <= index < len(topics):
-        topics.pop(index)
-        if topics:
-            d["topic_index"] = d.get("topic_index", 0) % len(topics)
-        else:
-            d["topic_index"] = 0
-        d["auto_topics"] = topics
-        _save(d)
-
-
-def next_auto_topic() -> str | None:
-    """Возвращает следующую тему по кругу и сдвигает индекс."""
-    d = _load()
-    topics = d.get("auto_topics", [])
-    if not topics:
-        return None
-    idx = d.get("topic_index", 0) % len(topics)
-    topic = topics[idx]
-    d["topic_index"] = (idx + 1) % len(topics)
-    _save(d)
-    return topic
-
-
 # ── Статистика ────────────────────────────────────────────────────────────────
 
 def get_stats(hours: int = 24) -> dict:
@@ -270,3 +228,127 @@ def get_stats(hours: int = 24) -> dict:
         "pending_dm":       len(d["pending_dm"]),
         "watched_posts":    len(d["watched_posts"]),
     }
+
+# ── Пресеты ───────────────────────────────────────────────────────────────────
+# Структура пресета:
+# {
+#   "name": "агрессивный",
+#   "topics": ["тема1", "тема2"],
+#   "style": "агрессивный тон, короткие удары, без воды",
+#   "interval_hours": 4,
+#   "topic_index": 0,
+# }
+
+def get_presets() -> dict:
+    return _load().get("presets", {})
+
+
+def get_active_preset_name() -> str | None:
+    return _load().get("active_preset", None)
+
+
+def get_active_preset() -> dict | None:
+    d = _load()
+    name = d.get("active_preset")
+    if not name:
+        return None
+    return d.get("presets", {}).get(name)
+
+
+def preset_create(name: str):
+    d = _load()
+    d.setdefault("presets", {})
+    if name not in d["presets"]:
+        d["presets"][name] = {
+            "name":           name,
+            "topics":         [],
+            "style":          "",
+            "interval_hours": 4,
+            "topic_index":    0,
+        }
+    _save(d)
+
+
+def preset_set_active(name: str) -> bool:
+    d = _load()
+    if name not in d.get("presets", {}):
+        return False
+    d["active_preset"] = name
+    # Синхронизируем интервал планировщика с пресетом
+    preset = d["presets"][name]
+    d["settings"]["interval_hours"] = preset.get("interval_hours", 4)
+    _save(d)
+    return True
+
+
+def preset_add_topic(name: str, topic: str) -> bool:
+    d = _load()
+    if name not in d.get("presets", {}):
+        return False
+    if topic not in d["presets"][name]["topics"]:
+        d["presets"][name]["topics"].append(topic)
+    _save(d)
+    return True
+
+
+def preset_set_style(name: str, style: str) -> bool:
+    d = _load()
+    if name not in d.get("presets", {}):
+        return False
+    d["presets"][name]["style"] = style
+    _save(d)
+    return True
+
+
+def preset_set_interval(name: str, hours: int) -> bool:
+    d = _load()
+    if name not in d.get("presets", {}):
+        return False
+    d["presets"][name]["interval_hours"] = hours
+    # Если этот пресет активен — обновляем и глобальный интервал
+    if d.get("active_preset") == name:
+        d["settings"]["interval_hours"] = hours
+    _save(d)
+    return True
+
+
+def preset_delete(name: str) -> bool:
+    d = _load()
+    if name not in d.get("presets", {}):
+        return False
+    del d["presets"][name]
+    if d.get("active_preset") == name:
+        d["active_preset"] = None
+    _save(d)
+    return True
+
+
+def preset_next_topic(name: str) -> str | None:
+    """Возвращает следующую тему из пресета по кругу."""
+    d = _load()
+    preset = d.get("presets", {}).get(name)
+    if not preset or not preset["topics"]:
+        return None
+    idx = preset.get("topic_index", 0) % len(preset["topics"])
+    topic = preset["topics"][idx]
+    d["presets"][name]["topic_index"] = (idx + 1) % len(preset["topics"])
+    _save(d)
+    return topic
+
+
+def preset_remove_topic(name: str, index: int) -> bool:
+    d = _load()
+    preset = d.get("presets", {}).get(name)
+    if not preset:
+        return False
+    topics = preset["topics"]
+    if 0 <= index < len(topics):
+        topics.pop(index)
+        d["presets"][name]["topics"] = topics
+        if topics:
+            d["presets"][name]["topic_index"] = d["presets"][name].get("topic_index", 0) % len(topics)
+        else:
+            d["presets"][name]["topic_index"] = 0
+        _save(d)
+        return True
+    return False
