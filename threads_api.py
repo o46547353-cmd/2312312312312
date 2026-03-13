@@ -70,52 +70,56 @@ def _get_user_id() -> str:
 
 def _upload_image(image_path: str) -> str:
     upload_id  = str(int(time.time() * 1000))
-    upload_url = f"https://www.threads.net/rupload_igphoto/fb_uploader_{upload_id}"
+    upload_url = f"https://www.threads.com/rupload_igphoto/fb_uploader_{upload_id}"
     with open(image_path, "rb") as f:
         img_data = f.read()
-    # image_compression должен быть JSON-строкой внутри JSON (не dict)
     rupload_params = json.dumps({
-        "upload_id":         upload_id,
-        "media_type":        1,
-        "image_compression": json.dumps({"lib_name": "moz", "lib_version": "3.1.m", "quality": "87"}),
-        "xsharing_user_ids": json.dumps([]),
-        "retry_context":     json.dumps({"num_step_auto_retry": 0, "num_reupload": 0, "num_step_manual_retry": 0}),
+        "upload_id": upload_id, "media_type": 1,
+        "image_compression": {"lib_name": "moz", "lib_version": "3.1.m", "quality": "87"}
     })
     r = requests.post(upload_url, headers={
         **HEADERS,
         "Content-Type":               "application/octet-stream",
-        "X-Entity-Type":              "image/jpeg",
         "X-Entity-Length":            str(len(img_data)),
         "X-Entity-Name":              f"fb_uploader_{upload_id}",
         "X-Instagram-Rupload-Params": rupload_params,
-        "Offset":                     "0",
-    }, data=img_data, timeout=60)
-    print(f"[upload] {r.status_code} → {r.text[:300]}")
-    if r.status_code not in (200, 201):
-        raise Exception(f"Картинка upload: {r.status_code} {r.text[:300]}")
+        "offset":                     "0",
+    }, data=img_data, timeout=30)
+    if r.status_code != 200:
+        raise Exception(f"Картинка: {r.status_code} {r.text[:200]}")
     return upload_id
 
 
 # ── ПУБЛИКАЦИЯ ────────────────────────────────────────────────────────────────
 
+def _jazoest(upload_id: str) -> str:
+    """Вычисляет jazoest — числовой токен из upload_id."""
+    return str(2 + sum(ord(c) for c in upload_id))
+
+
 def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> str:
     _check_write_backoff()
-    user_id   = _get_user_id()
     upload_id = str(int(time.time() * 1000))
-    device_id = f"android-{random.randint(0x100000000000, 0xffffffffffff):012x}"
 
-    # Точный формат из браузерного DevTools
     app_info = {
-        "reply_control":              0,
-        "entry_point":                "create_reply" if reply_to_id else "text_post_new",
+        "community_flair_id":       None,
+        "entry_point":              "create_reply" if reply_to_id else "sidebar_navigation",
+        "excluded_inline_media_ids":"[]",
         "fediverse_composer_enabled": True,
-        "is_reply_approval_enabled":  False,
-        "is_spoiler_media":           False,
-        "excluded_inline_media_ids":  "[]",
+        "gif_media_id":             None,
+        "is_reply_approval_enabled": False,
+        "is_spoiler_media":         False,
+        "link_attachment_url":      None,
+        "ranking_info_token":       None,
+        "reply_control":            0,
+        "self_thread_context_id":   str(uuid.uuid4()),
+        "snippet_attachment":       None,
+        "special_effects_enabled_str": None,
+        "tag_header":               None,
+        "text_with_entities":       {"entities": [], "text": text},
     }
     if reply_to_id:
-        app_info["reply_id"]               = str(reply_to_id)
-        app_info["self_thread_context_id"] = str(uuid.uuid4())
+        app_info["reply_id"] = str(reply_to_id)
 
     # Картинка
     has_image = False
@@ -124,56 +128,47 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
             upload_id = _upload_image(image_path)
             has_image = True
             print(f"[img] загружена upload_id={upload_id}, жду обработки...")
-            time.sleep(7)  # Threads нужно время зарегистрировать upload в state machine
+            time.sleep(10)
         except Exception as e:
             print(f"[img] не загружена: {e}, постим без картинки")
 
-    if has_image:
-        url = "https://www.threads.net/api/v1/media/configure_text_post_app_feed/"
-        payload = {
-            "upload_id":          upload_id,
-            "text_post_app_info": json.dumps(app_info),
-            "caption":            text,
-            "_uid":               user_id,
-            "_csrftoken":         CSRF_TOKEN,
-            "device_id":          device_id,
-            "source_type":        "4",
-            "media_type":         "1",
-            "audience":           "default",
-            "publish_mode":       "text_post",
-        }
-    else:
-        url = "https://www.threads.net/api/v1/media/configure_text_only_post/"
-        payload = {
-            "upload_id":          upload_id,
-            "text_post_app_info": json.dumps(app_info),
-            "caption":            text,
-            "_uid":               user_id,
-            "_csrftoken":         CSRF_TOKEN,
-            "device_id":          device_id,
-            "audience":           "default",
-            "publish_mode":       "text_post",
-        }
+    # Браузерные заголовки — точно как в DevTools
+    hdrs = {
+        "User-Agent":           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+        "X-CSRFToken":          CSRF_TOKEN,
+        "X-IG-App-ID":          "238260118697367",
+        "X-ASBD-ID":            "359341",
+        "X-Bloks-Version-ID":   "1363ee4ad31aa321b811ce30b2aacd0f644c2fb57f440040b43e585a4befa092",
+        "X-Instagram-AJAX":     "0",
+        "Cookie":               f"sessionid={SESSION_ID}; csrftoken={CSRF_TOKEN}",
+        "Content-Type":         "application/x-www-form-urlencoded;charset=UTF-8",
+        "Accept":               "*/*",
+        "Accept-Language":      "ru-RU,ru;q=0.9",
+        "Origin":               "https://www.threads.com",
+        "Referer":              f"https://www.threads.com/@{USERNAME}",
+    }
+
+    payload = {
+        "caption":                   text,
+        "text_post_app_info":        json.dumps(app_info),
+        "upload_id":                 upload_id,
+        "is_threads":                "true",
+        "should_include_permalink":  "true",
+        "creator_geo_gating_info":   json.dumps({"whitelist_country_codes": []}),
+        "web_session_id":            f"{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}:{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}:{''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=6))}",
+        "jazoest":                   _jazoest(upload_id),
+    }
 
     if reply_to_id:
         payload["barcelona_source_reply_id"] = str(reply_to_id)
 
-    r = requests.post(url, headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-                      data=payload, timeout=20)
-    print(f"[post] {r.status_code} reply_to={reply_to_id} → {r.text[:300]}")
+    if has_image:
+        url = "https://www.threads.com/api/v1/media/configure_text_post_app_feed/"
+    else:
+        url = "https://www.threads.com/api/v1/media/configure_text_only_post/"
 
-    # Если картинка дала 400 — публикуем без неё чтобы не сломать цепочку
-    if r.status_code == 400 and has_image:
-        print("[post] 400 с картинкой — пробую без картинки")
-        url = "https://www.threads.net/api/v1/media/configure_text_only_post/"
-        payload.pop("source_type", None)
-        payload.pop("media_type", None)
-        payload["publish_mode"] = "text_post"
-        # Новый upload_id (не привязан к картинке)
-        payload["upload_id"] = str(int(time.time() * 1000))
-        r = requests.post(url, headers={**HEADERS, "Content-Type": "application/x-www-form-urlencoded"},
-                          data=payload, timeout=20)
-        print(f"[post] retry без картинки: {r.status_code} → {r.text[:200]}")
+    r = requests.post(url, headers=hdrs, data=payload, timeout=30)
+    print(f"[post] {r.status_code} reply_to={reply_to_id} has_image={has_image} → {r.text[:400]}")
 
     if r.status_code == 200:
         _reset_write_429()
@@ -187,18 +182,16 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
     elif r.status_code == 429:
         _handle_write_429()
     else:
-        raise Exception(f"Threads {r.status_code}: {r.text}")
+        raise Exception(f"Threads {r.status_code}: {r.text[:300]}")
 
 
 def post_series(posts: dict, image_path: str = None) -> list:
-    # Картинка только в пост1 (корневой без reply_to_id).
-    # Threads не принимает медиа в reply-постах — даёт 400.
     ids = []
-    id1 = _post_single(posts["post1"], image_path=image_path)
+    id1 = _post_single(posts["post1"])
     ids.append(id1); time.sleep(random.uniform(8, 12))
     id2 = _post_single(posts["post2"], reply_to_id=id1)
     ids.append(id2); time.sleep(random.uniform(8, 12))
-    id3 = _post_single(posts["post3"], reply_to_id=id2)
+    id3 = _post_single(posts["post3"], reply_to_id=id2, image_path=image_path)
     ids.append(id3); time.sleep(random.uniform(8, 12))
     id4 = _post_single(posts["post4"], reply_to_id=id3)
     ids.append(id4)
