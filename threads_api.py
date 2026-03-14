@@ -146,28 +146,38 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
     def rnd():
         return "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=6))
 
-    payload = {
-        "audience":                        "default",
-        "caption":                         text,
-        "creator_geo_gating_info":         json.dumps({"whitelist_country_codes": []}),
-        "is_upload_type_override_allowed": "1",
-        "jazoest":                         _jazoest(upload_id),
-        "publish_mode":                    "text_post",
-        "should_include_permalink":        "true",
-        "text_post_app_info":              json.dumps(app_info),
-        "upload_id":                       upload_id,
-        "web_session_id":                  f"{rnd()}:{rnd()}:{rnd()}",
-    }
+    # Payload точно по DevTools — лишних полей нет
+    if has_image:
+        # F12 DevTools: пост с картинкой — configure_text_post_app_feed, статус 200
+        url = "https://www.threads.com/api/v1/media/configure_text_post_app_feed/"
+        payload = {
+            "caption":                   text,
+            "creator_geo_gating_info":   json.dumps({"whitelist_country_codes": []}),
+            "jazoest":                   _jazoest(upload_id),
+            "should_include_permalink":  "true",
+            "text_post_app_info":        json.dumps(app_info),
+            "upload_id":                 upload_id,
+            "web_session_id":            f"{rnd()}:{rnd()}:{rnd()}",
+            "is_threads":                "true",
+        }
+    else:
+        # F12 DevTools: reply — configure_text_only_post, статус 200
+        url = "https://www.threads.com/api/v1/media/configure_text_only_post/"
+        payload = {
+            "audience":                        "default",
+            "caption":                         text,
+            "creator_geo_gating_info":         json.dumps({"whitelist_country_codes": []}),
+            "is_upload_type_override_allowed": "1",
+            "jazoest":                         _jazoest(upload_id),
+            "publish_mode":                    "text_post",
+            "should_include_permalink":        "true",
+            "text_post_app_info":              json.dumps(app_info),
+            "upload_id":                       upload_id,
+            "web_session_id":                  f"{rnd()}:{rnd()}:{rnd()}",
+        }
 
     if reply_to_id:
         payload["barcelona_source_reply_id"] = str(reply_to_id)
-
-    # configure_text_only_post работает для обоих случаев.
-    # При наличии картинки добавляем source_type=4 — сервер подтягивает медиа по upload_id.
-    # configure_text_post_app_feed даёт 500 — не использовать.
-    url = "https://www.threads.com/api/v1/media/configure_text_only_post/"
-    if has_image:
-        payload["source_type"] = "4"
 
     r = requests.post(url, headers=_browser_headers(), data=payload, timeout=30)
     print(f"[post] {r.status_code} reply_to={reply_to_id} has_image={has_image} → {r.text[:400]}")
