@@ -162,9 +162,12 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
     if reply_to_id:
         payload["barcelona_source_reply_id"] = str(reply_to_id)
 
-    url = ("https://www.threads.com/api/v1/media/configure_text_post_app_feed/"
-           if has_image else
-           "https://www.threads.com/api/v1/media/configure_text_only_post/")
+    # configure_text_only_post работает для обоих случаев.
+    # При наличии картинки добавляем source_type=4 — сервер подтягивает медиа по upload_id.
+    # configure_text_post_app_feed даёт 500 — не использовать.
+    url = "https://www.threads.com/api/v1/media/configure_text_only_post/"
+    if has_image:
+        payload["source_type"] = "4"
 
     r = requests.post(url, headers=_browser_headers(), data=payload, timeout=30)
     print(f"[post] {r.status_code} reply_to={reply_to_id} has_image={has_image} → {r.text[:400]}")
