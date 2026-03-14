@@ -121,14 +121,21 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
     upload_id = str(int(time.time() * 1000))
 
     app_info = {
-        "entry_point":                "create_reply" if reply_to_id else "sidebar_navigation",
-        "excluded_inline_media_ids":  "[]",
-        "fediverse_composer_enabled": True,
-        "is_reply_approval_enabled":  False,
-        "is_spoiler_media":           False,
-        "reply_control":              0,
-        "self_thread_context_id":     str(uuid.uuid4()),
-        "text_with_entities":         {"entities": [], "text": text},
+        "community_flair_id":          None,
+        "entry_point":                 "create_reply" if reply_to_id else "sidebar_navigation",
+        "excluded_inline_media_ids":   "[]",
+        "fediverse_composer_enabled":  True,
+        "gif_media_id":                None,
+        "is_reply_approval_enabled":   False,
+        "is_spoiler_media":            False,
+        "link_attachment_url":         None,
+        "ranking_info_token":          None,
+        "reply_control":               0,
+        "self_thread_context_id":      str(uuid.uuid4()),
+        "snippet_attachment":          None,
+        "special_effects_enabled_str": None,
+        "tag_header":                  None,
+        "text_with_entities":          {"entities": [], "text": text},
     }
     if reply_to_id:
         app_info["reply_id"] = str(reply_to_id)
@@ -146,35 +153,23 @@ def _post_single(text: str, reply_to_id: str = None, image_path: str = None) -> 
     def rnd():
         return "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=6))
 
-    # Payload точно по DevTools — лишних полей нет
-    if has_image:
-        # F12 DevTools: пост с картинкой — configure_text_post_app_feed, статус 200
-        url = "https://www.threads.com/api/v1/media/configure_text_post_app_feed/"
-        payload = {
-            "caption":                   text,
-            "creator_geo_gating_info":   json.dumps({"whitelist_country_codes": []}),
-            "jazoest":                   _jazoest(upload_id),
-            "should_include_permalink":  "true",
-            "text_post_app_info":        json.dumps(app_info),
-            "upload_id":                 upload_id,
-            "web_session_id":            f"{rnd()}:{rnd()}:{rnd()}",
-            "is_threads":                "true",
-        }
-    else:
-        # F12 DevTools: reply — configure_text_only_post, статус 200
-        url = "https://www.threads.com/api/v1/media/configure_text_only_post/"
-        payload = {
-            "audience":                        "default",
-            "caption":                         text,
-            "creator_geo_gating_info":         json.dumps({"whitelist_country_codes": []}),
-            "is_upload_type_override_allowed": "1",
-            "jazoest":                         _jazoest(upload_id),
-            "publish_mode":                    "text_post",
-            "should_include_permalink":        "true",
-            "text_post_app_info":              json.dumps(app_info),
-            "upload_id":                       upload_id,
-            "web_session_id":                  f"{rnd()}:{rnd()}:{rnd()}",
-        }
+    # Payload точно по F12 DevTools (статус 200 с картинкой)
+    url = ("https://www.threads.com/api/v1/media/configure_text_post_app_feed/"
+           if has_image else
+           "https://www.threads.com/api/v1/media/configure_text_only_post/")
+
+    payload = {
+        "audience":                        "default",
+        "caption":                         text,
+        "creator_geo_gating_info":         json.dumps({"whitelist_country_codes": []}),
+        "is_threads":                      "true",
+        "is_upload_type_override_allowed": "1",
+        "jazoest":                         _jazoest(upload_id),
+        "should_include_permalink":        "true",
+        "text_post_app_info":              json.dumps(app_info),
+        "upload_id":                       upload_id,
+        "web_session_id":                  f"{rnd()}:{rnd()}:{rnd()}",
+    }
 
     if reply_to_id:
         payload["barcelona_source_reply_id"] = str(reply_to_id)
